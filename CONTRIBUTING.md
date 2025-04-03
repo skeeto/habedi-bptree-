@@ -5,17 +5,17 @@ Contributions are always welcome and appreciated.
 
 ## How to Contribute
 
-Please check the [issue tracker](https://github.com/habedi/template-c-project/issues) to see if there is an issue you
+Please check the [issue tracker](https://github.com/habedi/bptree/issues) to see if there is an issue you
 would like to work on or if it has already been resolved.
 
 ### Reporting Bugs
 
-1. Open an issue on the [issue tracker](https://github.com/habedi/template-c-project/issues).
+1. Open an issue on the [issue tracker](https://github.com/habedi/bptree/issues).
 2. Include information such as steps to reproduce, expected/actual behavior, and relevant logs or screenshots.
 
 ### Suggesting Features
 
-1. Open an issue on the [issue tracker](https://github.com/habedi/template-c-project/issues).
+1. Open an issue on the [issue tracker](https://github.com/habedi/bptree/issues).
 2. Provide details about the feature, its purpose, and potential implementation ideas.
 
 ## Submitting Pull Requests
@@ -24,7 +24,8 @@ would like to work on or if it has already been resolved.
 - Write a clear description of the changes you made and the reasons behind them.
 
 > [!IMPORTANT]
-> It's assumed that by submitting a pull request, you agree to license your contributions under the project's license.
+> Unless otherwise explicitly specified, all contributions to this project are licensed under the same license as the
+> project itself.
 
 ## Development Workflow
 

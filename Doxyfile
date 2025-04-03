@@ -4,8 +4,8 @@
 #---------------------------------------------------------------------------
 # Project related settings
 #---------------------------------------------------------------------------
-PROJECT_NAME       = "My Project"
-OUTPUT_DIRECTORY   = docs
+PROJECT_NAME       = "Bptree"
+OUTPUT_DIRECTORY   = doc
 CREATE_SUBDIRS     = NO
 
 #---------------------------------------------------------------------------
@@ -19,12 +19,12 @@ EXTRACT_ALL        = YES
 #---------------------------------------------------------------------------
 # Output formats
 #---------------------------------------------------------------------------
-# HTML output will be placed in docs/html
+# HTML output will be placed in doc/html
 GENERATE_HTML      = YES
 HTML_OUTPUT        = html
 
-# LaTeX output will be placed in docs/latex
-GENERATE_LATEX     = YES
+# LaTeX output will be placed in doc/latex
+GENERATE_LATEX     = NO
 LATEX_OUTPUT       = latex
 
 #---------------------------------------------------------------------------
