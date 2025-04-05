@@ -1,4 +1,5 @@
 #define BPTREE_IMPLEMENTATION
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,9 +19,40 @@ int record_compare(const void *a, const void *b, const void *udata) {
     return (rec1->id > rec2->id) - (rec1->id < rec2->id);
 }
 
+typedef struct {
+    char *beg;
+    char *end;
+} Arena;
+
+static void *alloc(Arena *a, ptrdiff_t count, ptrdiff_t size, ptrdiff_t align)
+{
+    ptrdiff_t pad = (ptrdiff_t)a->end & (align - 1);
+    assert(count < (a->end - a->beg - pad)/size);
+    return memset(a->end -= pad + count*size, 0, count*size);
+}
+
+static void *balloc(size_t size, void *user_data)
+{
+    return alloc(user_data, 1, (ptrdiff_t)size, sizeof(void *));
+}
+
+static void bfree(void *ptr, size_t size, void *user_data)
+{
+    Arena *a = user_data;
+    char  *p = ptr;
+    size += -size & (sizeof(void *) - 1);
+    if (a->end == p-size) {
+        a->end += size;
+    }
+}
+
 int main() {
+    int   cap = 1<<24;
+    char *mem = malloc(cap);
+    Arena a   = {mem, mem+cap};
+
     // Create a new B+tree instance. We set max_keys to 4 for this example.
-    bptree *tree = bptree_new(4, record_compare, NULL, NULL, NULL, true);  // debug_enabled = true
+    bptree *tree = bptree_new(4, record_compare, &a, balloc, bfree, true);  // debug_enabled = true
     if (!tree) {
         printf("Failed to create B+tree\n");
         return 1;
