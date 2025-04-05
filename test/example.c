@@ -70,8 +70,9 @@ int main() {
             printf("  id=%d, name=%s\n", r->id, r->name);
         }
         // Free the results array returned by bptree_get_range
+        int capacity = 16;  // FIXME
         tree->free_fn(
-            range_results);  // Always use tree->free_fn to free memory allocated by the tree
+            range_results, capacity * sizeof(void *), tree->udata);  // Always use tree->free_fn to free memory allocated by the tree
     }
 
     // Iterate through the whole tree using the iterator
@@ -82,7 +83,7 @@ int main() {
         struct record *r = item;
         printf("  id=%d, name=%s\n", r->id, r->name);
     }
-    bptree_iterator_free(iter, tree->free_fn);
+    bptree_iterator_free(iter, tree);
 
     // Remove a record
     bptree_status status = bptree_remove(tree, &rec2);

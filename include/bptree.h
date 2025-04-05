@@ -73,14 +73,14 @@ static void bptree_logger(const char *fmt, ...) {
  * @param size Number of bytes to allocate.
  * @return Pointer to the allocated memory.
  */
-typedef void *(*bptree_malloc_t)(size_t size);
+typedef void *(*bptree_malloc_t)(size_t size, void *user_data);
 
 /**
  * @brief Custom memory free function type for B+Tree.
  *
  * @param ptr Pointer to the memory to free.
  */
-typedef void (*bptree_free_t)(void *ptr);
+typedef void (*bptree_free_t)(void *ptr, size_t size, void *user_data);
 
 /**
  * @brief Status codes returned by B+Tree operations.
@@ -212,7 +212,7 @@ void *bptree_iterator_next(bptree_iterator *iter);
  * @param iter Pointer to the iterator.
  * @param free_fn Custom memory free function.
  */
-void bptree_iterator_free(bptree_iterator *iter, bptree_free_t free_fn);
+void bptree_iterator_free(bptree_iterator *iter, const bptree *tree);
 
 /**
  * @brief Structure containing statistics about the B+Tree.
@@ -256,14 +256,21 @@ bptree_stats bptree_get_stats(const bptree *tree);
  * @param size Number of bytes to allocate.
  * @return Pointer to the allocated memory.
  */
-static void *default_malloc(const size_t size) { return malloc(size); }
+static void *default_malloc(const size_t size, void *user_data) {
+    (void)user_data;
+    return malloc(size);
+}
 
 /**
  * @brief Default memory free function.
  *
  * @param ptr Pointer to the memory to free.
  */
-static void default_free(void *ptr) { free(ptr); }
+static void default_free(void *ptr, size_t size, void *user_data) {
+    (void)size;
+    (void)user_data;
+    free(ptr);
+}
 
 /* Internal structure representing a node in the B+Tree */
 typedef struct bptree_node {
@@ -369,23 +376,23 @@ static int internal_node_search(const bptree *tree, void *const *keys, const int
  * @return Pointer to the new leaf node, or NULL on failure.
  */
 static bptree_node *create_leaf(const bptree *tree) {
-    bptree_node *node = tree->malloc_fn(sizeof(bptree_node));
+    bptree_node *node = tree->malloc_fn(sizeof(bptree_node), tree->udata);
     if (!node) {
         BPTREE_LOG_DEBUG(tree, "Allocation failure (leaf node)");
         return NULL;
     }
     node->is_leaf = 1;
     node->num_keys = 0;
-    node->keys = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *));
+    node->keys = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *), tree->udata);
     if (!node->keys) {
-        tree->free_fn(node);
+        tree->free_fn(node, sizeof(bptree_node), tree->udata);
         BPTREE_LOG_DEBUG(tree, "Allocation failure (leaf keys)");
         return NULL;
     }
-    node->ptr.leaf.items = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *));
+    node->ptr.leaf.items = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *), tree->udata);
     if (!node->ptr.leaf.items) {
-        tree->free_fn(node->keys);
-        tree->free_fn(node);
+        tree->free_fn(node->keys, tree->max_keys * sizeof(void *), tree->udata);
+        tree->free_fn(node, sizeof(bptree_node), tree->udata);
         BPTREE_LOG_DEBUG(tree, "Allocation failure (leaf items)");
         return NULL;
     }
@@ -400,24 +407,24 @@ static bptree_node *create_leaf(const bptree *tree) {
  * @return Pointer to the new internal node, or NULL on failure.
  */
 static bptree_node *create_internal(const bptree *tree) {
-    bptree_node *node = tree->malloc_fn(sizeof(bptree_node));
+    bptree_node *node = tree->malloc_fn(sizeof(bptree_node), tree->udata);
     if (!node) {
         BPTREE_LOG_DEBUG(tree, "Allocation failure (internal node)");
         return NULL;
     }
     node->is_leaf = 0;
     node->num_keys = 0;
-    node->keys = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *));
+    node->keys = (void **)tree->malloc_fn(tree->max_keys * sizeof(void *), tree->udata);
     if (!node->keys) {
-        tree->free_fn(node);
+        tree->free_fn(node, sizeof(bptree_node), tree->udata);
         BPTREE_LOG_DEBUG(tree, "Allocation failure (internal keys)");
         return NULL;
     }
     node->ptr.internal.children =
-        (bptree_node **)tree->malloc_fn((tree->max_keys + 1) * sizeof(bptree_node *));
+        (bptree_node **)tree->malloc_fn((tree->max_keys + 1) * sizeof(bptree_node *), tree->udata);
     if (!node->ptr.internal.children) {
-        tree->free_fn(node->keys);
-        tree->free_fn(node);
+        tree->free_fn(node->keys, tree->max_keys * sizeof(void *), tree->udata);
+        tree->free_fn(node, sizeof(bptree_node), tree->udata);
         BPTREE_LOG_DEBUG(tree, "Allocation failure (internal children)");
         return NULL;
     }
@@ -435,16 +442,16 @@ static void free_node(bptree *tree, bptree_node *node) {
         return;
     }
     if (node->is_leaf) {
-        tree->free_fn(node->keys);
-        tree->free_fn(node->ptr.leaf.items);
+        tree->free_fn(node->keys, tree->max_keys * sizeof(void *), tree->udata);
+        tree->free_fn(node->ptr.leaf.items, tree->max_keys * sizeof(void *), tree->udata);
     } else {
         for (int i = 0; i <= node->num_keys; i++) {
             free_node(tree, node->ptr.internal.children[i]);
         }
-        tree->free_fn(node->keys);
-        tree->free_fn(node->ptr.internal.children);
+        tree->free_fn(node->keys, tree->max_keys * sizeof(void *), tree->udata);
+        tree->free_fn(node->ptr.internal.children, (tree->max_keys + 1) * sizeof(bptree_node *), tree->udata);
     }
-    tree->free_fn(node);
+    tree->free_fn(node, sizeof(bptree_node), tree->udata);
 }
 
 /* Structure for internal result handling during insertion. */
@@ -469,14 +476,14 @@ static insert_result split_internal(const bptree *tree, bptree_node *node, void 
     insert_result res = {NULL, NULL, BPTREE_ERROR};
     const int total = node->num_keys + 1;
     const int split = total / 2;
-    void **all_keys = tree->malloc_fn(total * sizeof(void *));
-    bptree_node **all_children = tree->malloc_fn((total + 1) * sizeof(bptree_node *));
+    void **all_keys = tree->malloc_fn(total * sizeof(void *), tree->udata);
+    bptree_node **all_children = tree->malloc_fn((total + 1) * sizeof(bptree_node *), tree->udata);
     if (!all_keys || !all_children) {
         if (all_keys) {
-            tree->free_fn(all_keys);
+            tree->free_fn(all_keys, total * sizeof(void *), tree->udata);
         }
         if (all_children) {
-            tree->free_fn(all_children);
+            tree->free_fn(all_children, (total + 1) * sizeof(bptree_node *), tree->udata);
         }
         BPTREE_LOG_DEBUG(tree, "Allocation failure during split_internal");
         return res;
@@ -493,8 +500,8 @@ static insert_result split_internal(const bptree *tree, bptree_node *node, void 
     memcpy(node->ptr.internal.children, all_children, (split + 1) * sizeof(bptree_node *));
     bptree_node *new_internal = create_internal(tree);
     if (!new_internal) {
-        tree->free_fn(all_keys);
-        tree->free_fn(all_children);
+        tree->free_fn(all_keys, total * sizeof(void *), tree->udata);
+        tree->free_fn(all_children, (total + 1) * sizeof(bptree_node *), tree->udata);
         return res;
     }
     new_internal->num_keys = total - split - 1;
@@ -505,8 +512,8 @@ static insert_result split_internal(const bptree *tree, bptree_node *node, void 
     assert(res.promoted_key != NULL);
     res.new_child = new_internal;
     res.status = BPTREE_OK;
-    tree->free_fn(all_keys);
-    tree->free_fn(all_children);
+    tree->free_fn(all_keys, total * sizeof(void *), tree->udata);
+    tree->free_fn(all_children, (total + 1) * sizeof(bptree_node *), tree->udata);
     return res;
 }
 
@@ -539,14 +546,14 @@ static insert_result insert_recursive(bptree *tree, bptree_node *node, void *ite
         }
         const int total = node->num_keys + 1;
         const int split = total / 2;
-        void **temp_keys = tree->malloc_fn(total * sizeof(void *));
-        void **temp_items = tree->malloc_fn(total * sizeof(void *));
+        void **temp_keys = tree->malloc_fn(total * sizeof(void *), tree->udata);
+        void **temp_items = tree->malloc_fn(total * sizeof(void *), tree->udata);
         if (!temp_keys || !temp_items) {
             if (temp_keys) {
-                tree->free_fn(temp_keys);
+                tree->free_fn(temp_keys, total * sizeof(void *), tree->udata);
             }
             if (temp_items) {
-                tree->free_fn(temp_items);
+                tree->free_fn(temp_items, total * sizeof(void *), tree->udata);
             }
             BPTREE_LOG_DEBUG(tree, "Allocation failure during leaf split");
             return result;
@@ -563,8 +570,8 @@ static insert_result insert_recursive(bptree *tree, bptree_node *node, void *ite
         memcpy(node->ptr.leaf.items, temp_items, split * sizeof(void *));
         bptree_node *new_leaf = create_leaf(tree);
         if (!new_leaf) {
-            tree->free_fn(temp_keys);
-            tree->free_fn(temp_items);
+            tree->free_fn(temp_items, total * sizeof(void *), tree->udata);
+            tree->free_fn(temp_keys, total * sizeof(void *), tree->udata);
             return result;
         }
         new_leaf->num_keys = total - split;
@@ -575,8 +582,8 @@ static insert_result insert_recursive(bptree *tree, bptree_node *node, void *ite
         result.promoted_key = new_leaf->keys[0];
         result.new_child = new_leaf;
         result.status = BPTREE_OK;
-        tree->free_fn(temp_keys);
-        tree->free_fn(temp_items);
+        tree->free_fn(temp_items, total * sizeof(void *), tree->udata);
+        tree->free_fn(temp_keys, total * sizeof(void *), tree->udata);
         return result;
     }
     const int pos = internal_node_search(tree, node->keys, node->num_keys, item);
@@ -656,7 +663,7 @@ inline bptree_status bptree_remove(bptree *tree, const void *key) {
     const int INITIAL_STACK_CAPACITY = 16;
     int stack_capacity = INITIAL_STACK_CAPACITY;
     int depth = 0;
-    delete_stack_item *stack = tree->malloc_fn(stack_capacity * sizeof(delete_stack_item));
+    delete_stack_item *stack = tree->malloc_fn(stack_capacity * sizeof(delete_stack_item), tree->udata);
     if (stack == NULL) {
         return BPTREE_ALLOCATION_ERROR;
     }
@@ -666,13 +673,13 @@ inline bptree_status bptree_remove(bptree *tree, const void *key) {
         if (depth >= stack_capacity) {
             const int new_capacity = stack_capacity * 2;
             delete_stack_item *new_stack =
-                tree->malloc_fn(new_capacity * sizeof(delete_stack_item));
+                tree->malloc_fn(new_capacity * sizeof(delete_stack_item), tree->udata);
             if (new_stack == NULL) {
-                tree->free_fn(stack);
+                tree->free_fn(stack, stack_capacity * sizeof(delete_stack_item), tree->udata);
                 return BPTREE_ALLOCATION_ERROR;
             }
             memcpy(new_stack, stack, depth * sizeof(delete_stack_item));
-            tree->free_fn(stack);
+            tree->free_fn(stack, stack_capacity * sizeof(delete_stack_item), tree->udata);
             stack = new_stack;
             stack_capacity = new_capacity;
         }
@@ -683,7 +690,7 @@ inline bptree_status bptree_remove(bptree *tree, const void *key) {
     }
     const int pos = leaf_node_search(tree, node->keys, node->num_keys, key);
     if (pos >= node->num_keys || tree->compare(key, node->keys[pos], tree->udata) != 0) {
-        tree->free_fn(stack);
+        tree->free_fn(stack, stack_capacity * sizeof(delete_stack_item), tree->udata);
         return BPTREE_NOT_FOUND;
     }
     memmove(&node->ptr.leaf.items[pos], &node->ptr.leaf.items[pos + 1],
@@ -830,13 +837,13 @@ inline bptree_status bptree_remove(bptree *tree, const void *key) {
     if (tree->root->num_keys == 0 && !tree->root->is_leaf) {
         bptree_node *old_root = tree->root;
         tree->root = tree->root->ptr.internal.children[0];
-        tree->free_fn(old_root->keys);
-        tree->free_fn(old_root->ptr.internal.children);
-        tree->free_fn(old_root);
+        tree->free_fn(old_root, sizeof(bptree_node), tree->udata);
+        tree->free_fn(node->ptr.internal.children, (tree->max_keys + 1) * sizeof(bptree_node *), tree->udata);
+        tree->free_fn(old_root->keys, old_root->num_keys * sizeof(void *), tree->udata);
         tree->height--;
     }
     tree->count--;
-    tree->free_fn(stack);
+    tree->free_fn(stack, stack_capacity * sizeof(delete_stack_item), tree->udata);
     return BPTREE_OK;
 }
 
@@ -852,7 +859,7 @@ inline bptree *bptree_new(
     if (!free_fn) {
         free_fn = default_free;
     }
-    bptree *tree = malloc_fn(sizeof(bptree));
+    bptree *tree = malloc_fn(sizeof(bptree), user_data);
     if (!tree) {
         return NULL;
     }
@@ -868,7 +875,7 @@ inline bptree *bptree_new(
     BPTREE_LOG_DEBUG(tree, "B+tree created (max_keys=%d)", tree->max_keys);
     tree->root = create_leaf(tree);
     if (!tree->root) {
-        tree->free_fn(tree);
+        tree->free_fn(tree, sizeof(bptree), tree->udata);
         return NULL;
     }
     return tree;
@@ -879,7 +886,7 @@ inline void bptree_free(bptree *tree) {
         return;
     }
     free_node(tree, tree->root);
-    tree->free_fn(tree);
+    tree->free_fn(tree, sizeof(bptree), tree->udata);
 }
 
 inline void **bptree_get_range(const bptree *tree, const void *start_key, const void *end_key,
@@ -894,7 +901,7 @@ inline void **bptree_get_range(const bptree *tree, const void *start_key, const 
         node = node->ptr.internal.children[pos];
     }
     int capacity = 16;
-    void **results = tree->malloc_fn(capacity * sizeof(void *));
+    void **results = tree->malloc_fn(capacity * sizeof(void *), tree->udata);
     if (results == NULL) {
         return NULL;
     }
@@ -904,13 +911,13 @@ inline void **bptree_get_range(const bptree *tree, const void *start_key, const 
                 tree->compare(node->keys[i], end_key, tree->udata) <= 0) {
                 if (*count >= capacity) {
                     capacity *= 2;
-                    void **temp = tree->malloc_fn(capacity * sizeof(void *));
+                    void **temp = tree->malloc_fn(capacity * sizeof(void *), tree->udata);
                     if (temp == NULL) {
-                        tree->free_fn(results);
+                        tree->free_fn(results, capacity * sizeof(void *), tree->udata);
                         return NULL;
                     }
                     memcpy(temp, results, *count * sizeof(void *));
-                    tree->free_fn(results);
+                    tree->free_fn(results, capacity * sizeof(void *), tree->udata);
                     results = temp;
                 }
                 results[(*count)++] = node->ptr.leaf.items[i];
@@ -937,7 +944,7 @@ bptree *bptree_bulk_load(int max_keys,
     }
     int items_per_leaf = tree->max_keys;
     int n_leaves = (n_items + items_per_leaf - 1) / items_per_leaf;
-    bptree_node **leaves = tree->malloc_fn(n_leaves * sizeof(bptree_node *));
+    bptree_node **leaves = tree->malloc_fn(n_leaves * sizeof(bptree_node *), tree->udata);
     if (!leaves) {
         bptree_free(tree);
         return NULL;
@@ -949,7 +956,7 @@ bptree *bptree_bulk_load(int max_keys,
             for (int j = 0; j < i; j++) {
                 free_node(tree, leaves[j]);
             }
-            tree->free_fn(leaves);
+            tree->free_fn(leaves, n_leaves * sizeof(bptree_node *), tree->udata);
             bptree_free(tree);
             return NULL;
         }
@@ -972,13 +979,13 @@ bptree *bptree_bulk_load(int max_keys,
     while (level_count > 1) {
         int group_size = tree->max_keys;
         int parent_count = (level_count + group_size - 1) / group_size;
-        bptree_node **parent_level = tree->malloc_fn(parent_count * sizeof(bptree_node *));
+        bptree_node **parent_level = tree->malloc_fn(parent_count * sizeof(bptree_node *), tree->udata);
         if (!parent_level) {
             for (int j = 0; j < level_count; j++) {
                 free_node(tree, current_level[j]);
             }
             if (current_level != leaves) {
-                tree->free_fn(current_level);
+                tree->free_fn(current_level, n_leaves * sizeof(bptree_node *), tree->udata);
             }
             bptree_free(tree);
             return NULL;
@@ -994,9 +1001,9 @@ bptree *bptree_bulk_load(int max_keys,
                 for (int j = 0; j < parent_index; j++) {
                     free_node(tree, parent_level[j]);
                 }
-                tree->free_fn(parent_level);
+                tree->free_fn(parent_level, parent_count * sizeof(bptree_node *), tree->udata);
                 if (current_level != leaves) {
-                    tree->free_fn(current_level);
+                    tree->free_fn(current_level, n_leaves * sizeof(bptree_node *), tree->udata);
                 }
                 bptree_free(tree);
                 return NULL;
@@ -1018,7 +1025,7 @@ bptree *bptree_bulk_load(int max_keys,
         }
         tree->height++;
         if (current_level != leaves) {
-            tree->free_fn(current_level);
+            tree->free_fn(current_level, n_leaves * sizeof(bptree_node *), tree->udata);
         }
         current_level = parent_level;
         level_count = parent_count;
@@ -1028,15 +1035,15 @@ bptree *bptree_bulk_load(int max_keys,
     tree->root = current_level[0];
     free_node(tree, old_root);
     if (current_level != leaves) {
-        tree->free_fn(current_level);
+        tree->free_fn(current_level, n_leaves * sizeof(bptree_node *), tree->udata);
     }
-    tree->free_fn(leaves);
+    tree->free_fn(leaves, n_leaves * sizeof(bptree_node *), tree->udata);
     if (!tree->root->is_leaf && tree->root->num_keys == 0) {
         bptree_node *temp = tree->root;
         tree->root = temp->ptr.internal.children[0];
-        tree->free_fn(temp->keys);
-        tree->free_fn(temp->ptr.internal.children);
-        tree->free_fn(temp);
+        tree->free_fn(temp, sizeof(bptree_node), tree->udata);
+        tree->free_fn(temp->ptr.internal.children, (tree->max_keys + 1) * sizeof(bptree_node *), tree->udata);
+        tree->free_fn(temp->keys, tree->max_keys * sizeof(void *), tree->udata);
         tree->height--;
     }
     tree->count = n_items;
@@ -1047,7 +1054,7 @@ bptree_iterator *bptree_iterator_new(const bptree *tree) {
     if (!tree || !tree->root) {
         return NULL;
     }
-    bptree_iterator *iter = tree->malloc_fn(sizeof(bptree_iterator));
+    bptree_iterator *iter = tree->malloc_fn(sizeof(bptree_iterator), tree->udata);
     if (!iter) {
         return NULL;
     }
@@ -1076,9 +1083,9 @@ void *bptree_iterator_next(bptree_iterator *iter) {
     }
 }
 
-void bptree_iterator_free(bptree_iterator *iter, bptree_free_t free_fn) {
-    if (iter && free_fn) {
-        free_fn(iter);
+void bptree_iterator_free(bptree_iterator *iter, const bptree *tree) {
+    if (iter && tree->free_fn) {
+        tree->free_fn(iter, sizeof(bptree_iterator), tree->udata);
     }
 }
 
